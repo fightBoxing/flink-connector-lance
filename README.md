@@ -1,20 +1,61 @@
-# Flink Connector Lance
+<p align="center">
+  <img src="https://flink.apache.org/img/logo/png/1000/flink_squirrel_1000.png" alt="Flink Logo" width="100"/>
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="https://lancedb.github.io/lance/assets/lance_logo.png" alt="Lance Logo" width="100"/>
+</p>
 
-Apache Flink Connector for Lance 向量数据格式。
+<h1 align="center">Flink Connector Lance</h1>
 
-## 概述
+<p align="center">
+  <strong>Apache Flink Connector for Lance Vector Database</strong>
+</p>
 
-`flink-connector-lance` 是一个基于 Apache Flink 1.16.1 的 Lance 向量数据格式连接器，支持：
+<p align="center">
+  <a href="https://github.com/hashmapybx/flink-connector-lance/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"/>
+  </a>
+  <a href="https://github.com/hashmapybx/flink-connector-lance/actions">
+    <img src="https://img.shields.io/badge/build-passing-brightgreen.svg" alt="Build Status"/>
+  </a>
+  <img src="https://img.shields.io/badge/flink-1.16.1-orange.svg" alt="Flink Version"/>
+  <img src="https://img.shields.io/badge/lance-0.23.3-purple.svg" alt="Lance Version"/>
+  <img src="https://img.shields.io/badge/java-8+-red.svg" alt="Java Version"/>
+</p>
 
-- **Source 功能**：从 Lance 数据集中读取向量数据
-- **Sink 功能**：将 Flink 数据流写入 Lance 数据集
-- **向量索引构建**：支持 IVF_PQ、IVF_HNSW、IVF_FLAT 索引
-- **向量检索能力**：支持 KNN 检索（L2、Cosine、Dot）
-- **Flink Table API / SQL 支持**：声明式 SQL 接口
+<p align="center">
+  <a href="#-features">Features</a> •
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-documentation">Documentation</a> •
+  <a href="#-contributing">Contributing</a>
+</p>
 
-## 快速开始
+---
 
-### Maven 依赖
+## 📖 Overview
+
+`flink-connector-lance` is a high-performance Apache Flink connector for [Lance](https://lancedb.github.io/lance/), a modern columnar data format optimized for machine learning workloads and vector search. This connector enables seamless integration between Flink's powerful stream/batch processing capabilities and Lance's efficient vector storage.
+
+## ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| 🔄 **Source & Sink** | Full read/write support for Lance datasets |
+| 📊 **Table API & SQL** | Native Flink SQL DDL/DML support |
+| 🔍 **Vector Search** | KNN search with L2, Cosine, Dot metrics |
+| 📇 **Index Building** | IVF_PQ, IVF_HNSW, IVF_FLAT indexes |
+| ✅ **Exactly-Once** | Checkpoint-based exactly-once semantics |
+| 🎯 **Predicate Pushdown** | Filter pushdown for optimized reads |
+| 📁 **Catalog Support** | Lance Catalog for metadata management |
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Java 8 or higher
+- Apache Flink 1.16.x
+- Maven 3.6+
+
+### Maven Dependency
 
 ```xml
 <dependency>
@@ -24,58 +65,57 @@ Apache Flink Connector for Lance 向量数据格式。
 </dependency>
 ```
 
-### DataStream API 使用
+### Flink SQL Example
 
-#### 读取 Lance 数据
+```sql
+-- Create a Lance table
+CREATE TABLE vectors (
+    id BIGINT,
+    content STRING,
+    embedding ARRAY<FLOAT>
+) WITH (
+    'connector' = 'lance',
+    'path' = '/data/vectors',
+    'write.batch-size' = '1024'
+);
 
-```java
-import org.apache.flink.connector.lance.LanceSource;
-import org.apache.flink.connector.lance.config.LanceOptions;
+-- Insert data
+INSERT INTO vectors VALUES 
+    (1, 'Hello World', ARRAY[0.1, 0.2, 0.3, 0.4]);
 
-// 构建配置
-LanceOptions options = LanceOptions.builder()
-    .path("/path/to/lance/dataset")
-    .readBatchSize(1024)
-    .build();
-
-// 创建 Source
-LanceSource source = new LanceSource(options, rowType);
-
-// 添加到 Flink 环境
-DataStream<RowData> stream = env.addSource(source);
+-- Query data
+SELECT * FROM vectors WHERE id > 0;
 ```
 
-#### 使用 Builder 模式
+### DataStream API Example
 
 ```java
+// Read from Lance
 LanceSource source = LanceSource.builder()
-    .path("/path/to/lance/dataset")
-    .batchSize(512)
-    .columns(Arrays.asList("id", "content", "embedding"))
-    .filter("id > 100")
-    .rowType(rowType)
-    .build();
-```
-
-#### 写入 Lance 数据
-
-```java
-import org.apache.flink.connector.lance.LanceSink;
-
-LanceSink sink = LanceSink.builder()
-    .path("/path/to/output/dataset")
+    .path("/data/vectors")
     .batchSize(1024)
-    .writeMode(LanceOptions.WriteMode.APPEND)
-    .maxRowsPerFile(1000000)
+    .columns(Arrays.asList("id", "embedding"))
     .rowType(rowType)
     .build();
 
-dataStream.addSink(sink);
+DataStream<RowData> stream = env.addSource(source);
+
+// Write to Lance
+LanceSink sink = LanceSink.builder()
+    .path("/data/output")
+    .batchSize(1024)
+    .writeMode(WriteMode.APPEND)
+    .rowType(rowType)
+    .build();
+
+stream.addSink(sink);
 ```
 
-### Table API / SQL 使用
+## 📚 Documentation
 
-#### 创建 Catalog
+### Table API / SQL
+
+#### Create Catalog
 
 ```sql
 CREATE CATALOG lance_catalog WITH (
@@ -83,205 +123,147 @@ CREATE CATALOG lance_catalog WITH (
     'warehouse' = '/path/to/warehouse',
     'default-database' = 'default'
 );
+
+USE CATALOG lance_catalog;
 ```
 
-#### 创建表
+#### Table Options
 
-```sql
-CREATE TABLE lance_table (
-    id BIGINT,
-    content STRING,
-    embedding ARRAY<FLOAT>
-) WITH (
-    'connector' = 'lance',
-    'path' = '/path/to/dataset',
-    'read.batch-size' = '1024',
-    'write.batch-size' = '1024',
-    'write.mode' = 'append'
-);
-```
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `connector` | ✅ | - | Must be `lance` |
+| `path` | ✅ | - | Lance dataset path |
+| `read.batch-size` | ❌ | 1024 | Read batch size |
+| `write.batch-size` | ❌ | 1024 | Write batch size |
+| `write.mode` | ❌ | append | `append` or `overwrite` |
+| `write.max-rows-per-file` | ❌ | 1000000 | Max rows per file |
 
-#### 查询数据
-
-```sql
-SELECT * FROM lance_table WHERE id > 100;
-```
-
-#### 写入数据
-
-```sql
-INSERT INTO lance_table 
-SELECT id, content, embedding FROM source_table;
-```
-
-### 向量索引构建
+### Vector Index Building
 
 ```java
-import org.apache.flink.connector.lance.LanceIndexBuilder;
-import org.apache.flink.connector.lance.config.LanceOptions.IndexType;
-import org.apache.flink.connector.lance.config.LanceOptions.MetricType;
-
 LanceIndexBuilder builder = LanceIndexBuilder.builder()
-    .datasetPath("/path/to/dataset")
+    .datasetPath("/data/vectors")
     .columnName("embedding")
     .indexType(IndexType.IVF_PQ)
     .metricType(MetricType.L2)
     .numPartitions(256)
     .numSubVectors(16)
-    .numBits(8)
     .build();
 
-LanceIndexBuilder.IndexBuildResult result = builder.buildIndex();
-if (result.isSuccess()) {
-    System.out.println("索引构建成功，耗时: " + result.getDurationMillis() + "ms");
-}
+builder.buildIndex();
 ```
 
-#### 支持的索引类型
+#### Supported Index Types
 
-| 索引类型 | 描述 | 主要参数 |
-|---------|------|---------|
-| IVF_PQ | 倒排文件 + 乘积量化 | num_partitions, num_sub_vectors, num_bits |
-| IVF_HNSW | 倒排文件 + HNSW | num_partitions, max_level, m, ef_construction |
-| IVF_FLAT | 倒排文件 + 暴力搜索 | num_partitions |
+| Index Type | Use Case | Parameters |
+|------------|----------|------------|
+| **IVF_PQ** | Large-scale, memory-efficient | `num_partitions`, `num_sub_vectors`, `num_bits` |
+| **IVF_HNSW** | High recall, fast search | `num_partitions`, `m`, `ef_construction` |
+| **IVF_FLAT** | Small datasets, exact search | `num_partitions` |
 
-### 向量检索
+### Vector Search
 
 ```java
-import org.apache.flink.connector.lance.LanceVectorSearch;
-
 LanceVectorSearch search = LanceVectorSearch.builder()
-    .datasetPath("/path/to/dataset")
+    .datasetPath("/data/vectors")
     .columnName("embedding")
-    .metricType(MetricType.L2)
+    .metricType(MetricType.COSINE)
     .nprobes(20)
     .build();
 
 search.open();
-
-// 执行 KNN 检索
-float[] queryVector = new float[] {0.1f, 0.2f, 0.3f, ...};
-List<LanceVectorSearch.SearchResult> results = search.search(queryVector, 10);
-
-for (SearchResult result : results) {
-    System.out.println("距离: " + result.getDistance());
-    System.out.println("相似度: " + result.getSimilarity());
-}
-
+List<SearchResult> results = search.search(queryVector, 10);
 search.close();
 ```
 
-#### 支持的距离度量
+#### Distance Metrics
 
-| 度量类型 | 描述 |
-|---------|------|
-| L2 | 欧氏距离 |
-| Cosine | 余弦相似度 |
-| Dot | 点积 |
+| Metric | Description | Range |
+|--------|-------------|-------|
+| **L2** | Euclidean distance | [0, ∞) |
+| **Cosine** | Cosine similarity | [-1, 1] |
+| **Dot** | Inner product | (-∞, ∞) |
 
-## 配置参数
+### Type Mapping
 
-### Source 配置
-
-| 参数 | 描述 | 默认值 |
-|-----|------|-------|
-| `path` | Lance 数据集路径 | 必填 |
-| `read.batch-size` | 读取批次大小 | 1024 |
-| `read.columns` | 读取的列（逗号分隔） | 全部 |
-| `read.filter` | 过滤条件 | 无 |
-
-### Sink 配置
-
-| 参数 | 描述 | 默认值 |
-|-----|------|-------|
-| `path` | 输出路径 | 必填 |
-| `write.batch-size` | 写入批次大小 | 1024 |
-| `write.mode` | 写入模式（append/overwrite） | append |
-| `write.max-rows-per-file` | 每文件最大行数 | 1000000 |
-
-### 索引配置
-
-| 参数 | 描述 | 默认值 |
-|-----|------|-------|
-| `index.type` | 索引类型 | IVF_PQ |
-| `index.column` | 索引列名 | 必填 |
-| `index.num-partitions` | 分区数 | 256 |
-| `index.num-sub-vectors` | PQ 子向量数 | 自动 |
-| `index.num-bits` | 量化位数 | 8 |
-
-### 向量检索配置
-
-| 参数 | 描述 | 默认值 |
-|-----|------|-------|
-| `vector.column` | 向量列名 | 必填 |
-| `vector.metric` | 距离度量 | L2 |
-| `vector.nprobes` | 检索探针数 | 20 |
-| `vector.ef` | HNSW 搜索宽度 | 100 |
-| `vector.refine-factor` | 精细化因子 | 无 |
-
-## 类型映射
-
-| Lance/Arrow 类型 | Flink 类型 |
-|-----------------|-----------|
-| Int8 | TINYINT |
-| Int16 | SMALLINT |
-| Int32 | INT |
-| Int64 | BIGINT |
-| Float32 | FLOAT |
-| Float64 | DOUBLE |
-| String/LargeString | STRING |
+| Lance/Arrow Type | Flink Type |
+|------------------|------------|
+| Int8/16/32/64 | TINYINT/SMALLINT/INT/BIGINT |
+| Float32/64 | FLOAT/DOUBLE |
+| String | STRING |
 | Boolean | BOOLEAN |
-| Binary/LargeBinary | BYTES |
+| Binary | BYTES |
 | Date32 | DATE |
 | Timestamp | TIMESTAMP |
-| FixedSizeList\<Float32\> | ARRAY\<FLOAT\> |
-| FixedSizeList\<Float64\> | ARRAY\<DOUBLE\> |
+| FixedSizeList\<Float\> | ARRAY\<FLOAT\> |
 
-## 项目结构
+## 🏗️ Project Structure
 
 ```
 flink-connector-lance/
 ├── src/main/java/org/apache/flink/connector/lance/
-│   ├── LanceSource.java              # Source 实现
-│   ├── LanceSink.java                # Sink 实现
-│   ├── LanceInputFormat.java         # InputFormat 实现
-│   ├── LanceSplit.java               # 分片定义
-│   ├── LanceVectorSearch.java        # 向量检索
-│   ├── LanceIndexBuilder.java        # 索引构建
+│   ├── LanceSource.java           # Source implementation
+│   ├── LanceSink.java             # Sink with checkpointing
+│   ├── LanceInputFormat.java      # Batch input format
+│   ├── LanceIndexBuilder.java     # Vector index builder
+│   ├── LanceVectorSearch.java     # KNN search
 │   ├── config/
-│   │   └── LanceOptions.java         # 配置管理
+│   │   └── LanceOptions.java      # Configuration options
 │   ├── converter/
-│   │   ├── LanceTypeConverter.java   # 类型转换
-│   │   └── RowDataConverter.java     # 数据转换
+│   │   ├── LanceTypeConverter.java
+│   │   └── RowDataConverter.java
 │   └── table/
 │       ├── LanceDynamicTableFactory.java
 │       ├── LanceDynamicTableSource.java
 │       ├── LanceDynamicTableSink.java
 │       ├── LanceCatalog.java
-│       ├── LanceCatalogFactory.java
 │       └── LanceVectorSearchFunction.java
-├── src/test/java/...                 # 单元测试和集成测试
-└── pom.xml
+└── src/test/java/                 # Unit & integration tests
 ```
 
-## 构建
+## 🔧 Build
 
 ```bash
+# Build without tests
 mvn clean package -DskipTests
-```
 
-## 运行测试
+# Build with tests
+mvn clean package
 
-```bash
+# Run tests only
 mvn test
 ```
 
-## 依赖版本
+## 🤝 Contributing
 
-- Apache Flink: 1.16.1
-- Lance Java SDK: 0.9.0
-- Apache Arrow: 14.0.0
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-## License
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-Apache License 2.0
+## 📋 Roadmap
+
+- [ ] Streaming CDC support
+- [ ] Delta Lake interoperability
+- [ ] Distributed index building
+- [ ] GPU acceleration support
+- [ ] Python Table API support
+
+## 📄 License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [Apache Flink](https://flink.apache.org/) - Stateful computations over data streams
+- [LanceDB](https://lancedb.com/) - Modern columnar data format for ML
+- [Apache Arrow](https://arrow.apache.org/) - Cross-language development platform
+
+---
+
+<p align="center">
+  Made with ❤️ by the Flink Connector Lance Contributors
+</p>
