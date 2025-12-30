@@ -1,0 +1,2 @@
+org.apache.flink.connector.lance.table.LanceDynamicTableFactory
+org.apache.flink.connector.lance.table.LanceCatalogFactory

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CopilotChatTabs">
+    <option name="completionTestTabDelete" value="false" />
+    <option name="crTabDelete" value="true" />
+    <option name="selectedChatTabId" value="019b6ee43e337101a58fbbb0fdc3749c" />
+    <option name="tabConversationMap">
+      <map>
+        <entry key="019b6ee43e337101a58fbbb0fdc3749c" value="019b6ee43e40777b9bd4d84960cfd288" />
+      </map>
+    </option>
+    <option name="unitTestTabDelete" value="true" />
+  </component>
+</project>
