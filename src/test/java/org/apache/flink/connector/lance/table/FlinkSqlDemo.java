@@ -24,6 +24,8 @@ import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 
+import org.apache.flink.types.Row;
+import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -106,7 +109,9 @@ class FlinkSqlDemo {
     @Test
     @DisplayName("2. 插入向量数据到 Lance 表")
     void testInsertData() throws Exception {
-        // 首先创建表
+        // 使用相对路径，基于项目根目录
+        Path path = Paths.get(System.getProperty("user.dir"), "test-data");
+            // 首先创建表
         String createTableSql = String.format(
             "CREATE TABLE lance_documents (\n" +
             "    id BIGINT,\n" +
@@ -116,7 +121,7 @@ class FlinkSqlDemo {
             "    'connector' = 'lance',\n" +
             "    'path' = '%s',\n" +
             "    'write.mode' = 'overwrite'\n" +
-            ")", datasetPath);
+            ")", path.resolve("lance-db1"));
         
         tableEnv.executeSql(createTableSql);
         
@@ -136,6 +141,9 @@ class FlinkSqlDemo {
         TableResult result = tableEnv.executeSql(insertSql);
         result.await(30, TimeUnit.SECONDS);
         System.out.println("✅ 数据插入成功！\n");
+
+
+
     }
 
     @Test
@@ -360,6 +368,8 @@ class FlinkSqlDemo {
     @Test
     @DisplayName("9. 完整的向量存储和检索示例")
     void testCompleteVectorExample() throws Exception {
+        // 使用相对路径，基于项目根目录
+        Path path = Paths.get(System.getProperty("user.dir"), "test-data");
         System.out.println("========== 完整向量存储和检索示例 ==========\n");
         
         // 1. 创建向量表
@@ -387,11 +397,12 @@ class FlinkSqlDemo {
             "    'vector.column' = 'embedding',\n" +
             "    'vector.metric' = 'COSINE',\n" +
             "    'vector.nprobes' = '10'\n" +
-            ")", datasetPath);
+            ")", path.resolve("lance-db3"));
         
         System.out.println(createTableSql);
         System.out.println();
-        tableEnv.executeSql(createTableSql.replace("-- 1. 创建向量存储表\n", ""));
+        tableEnv.executeSql(createTableSql);
+//        tableEnv.executeSql(createTableSql.replace("-- 1. 创建向量存储表\n", ""));
         
         // 2. 插入测试数据
         String insertSql = 
@@ -410,6 +421,8 @@ class FlinkSqlDemo {
         
         System.out.println(insertSql);
         System.out.println();
+        TableResult result = tableEnv.executeSql(insertSql);
+        result.await(30, TimeUnit.SECONDS);
         
         // 3. 查询数据
         String selectSql = 
@@ -421,7 +434,14 @@ class FlinkSqlDemo {
         
         System.out.println(selectSql);
         System.out.println();
-        
+        TableResult tableResult = tableEnv.executeSql(selectSql);
+        tableResult
+                .await(3,TimeUnit.SECONDS);
+        CloseableIterator<Row> collect = tableResult.collect();
+        while (collect.hasNext()) {
+            System.out.println(collect.next());
+        }
+
         // 4. 聚合查询
         String aggSql = 
             "-- 4. 统计各分类文档数量\n" +
@@ -432,8 +452,288 @@ class FlinkSqlDemo {
         
         System.out.println(aggSql);
         System.out.println();
-        
+        tableEnv.executeSql(aggSql).print();
+
         System.out.println("✅ 完整示例展示完成！\n");
+    }
+
+    @Test
+    @DisplayName("9.1 向量检索 IVF_PQ 索引示例")
+    void testVectorSearchWithIvfPq() throws Exception {
+        System.out.println("========== 向量检索 IVF_PQ 索引示例 ==========");
+        
+        // 使用相对路径，基于项目根目录
+        Path basePath = Paths.get(System.getProperty("user.dir"), "test-data");
+        String datasetPath = basePath.resolve("lance-vector-search").toString();
+        
+        // ============================================
+        // 第一步：创建带有 IVF_PQ 索引配置的向量表
+        // ============================================
+        String createTableSql = String.format(
+            "CREATE TABLE vector_documents (\n" +
+            "    id BIGINT,\n" +
+            "    title STRING,\n" +
+            "    embedding ARRAY<FLOAT>\n" +
+            ") WITH (\n" +
+            "    'connector' = 'lance',\n" +
+            "    'path' = '%s',\n" +
+            "    'write.batch-size' = '1024',\n" +
+            "    'write.mode' = 'overwrite',\n" +
+            "    -- IVF_PQ 索引配置\n" +
+            "    'index.type' = 'IVF_PQ',\n" +
+            "    'index.column' = 'embedding',\n" +
+            "    'index.num-partitions' = '16',\n" +
+            "    'index.num-sub-vectors' = '8',\n" +
+            "    -- 向量检索配置\n" +
+            "    'vector.column' = 'embedding',\n" +
+            "    'vector.metric' = 'L2',\n" +
+            "    'vector.nprobes' = '10'\n" +
+            ")", datasetPath);
+        
+        System.out.println("-- 步骤1: 创建带有 IVF_PQ 索引配置的向量表");
+        System.out.println(createTableSql);
+        System.out.println();
+        tableEnv.executeSql(createTableSql);
+        
+        // ============================================
+        // 第二步：插入向量数据
+        // ============================================
+        String insertSql = 
+            "INSERT INTO vector_documents VALUES\n" +
+            "    (1, 'Flink流处理', ARRAY[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]),\n" +
+            "    (2, 'Spark批处理', ARRAY[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]),\n" +
+            "    (3, 'Kafka消息队列', ARRAY[0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1]),\n" +
+            "    (4, '向量数据库', ARRAY[0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85]),\n" +
+            "    (5, '机器学习基础', ARRAY[0.12, 0.22, 0.32, 0.42, 0.52, 0.62, 0.72, 0.82])";
+        
+        System.out.println("-- 步骤2: 插入向量数据");
+        System.out.println(insertSql);
+        System.out.println();
+        tableEnv.executeSql(insertSql).await(30, TimeUnit.SECONDS);
+        System.out.println("✅ 数据插入完成\n");
+        
+        // ============================================
+        // 第三步：注册向量检索 UDF
+        // ============================================
+        String createFunctionSql = 
+            "CREATE TEMPORARY FUNCTION vector_search AS \n" +
+            "    'org.apache.flink.connector.lance.table.LanceVectorSearchFunction'";
+        
+        System.out.println("-- 步骤3: 注册向量检索 UDF");
+        System.out.println(createFunctionSql);
+        System.out.println();
+        tableEnv.executeSql(createFunctionSql);
+        System.out.println("✅ UDF 注册完成\n");
+        
+        // ============================================
+        // 第四步：执行向量检索 - 基本用法
+        // ============================================
+        System.out.println("-- 步骤4: 执行向量检索 (基本用法)");
+        System.out.println("-- 参数说明:");
+        System.out.println("--   参数1: 数据集路径");
+        System.out.println("--   参数2: 向量列名");
+        System.out.println("--   参数3: 查询向量");
+        System.out.println("--   参数4: 返回TopK数量");
+        System.out.println("--   参数5: 距离度量类型 (L2/COSINE/DOT)");
+        System.out.println();
+        
+        String vectorSearchSql = String.format(
+            "SELECT * FROM TABLE(\n" +
+            "    vector_search(\n" +
+            "        '%s',                              -- 数据集路径\n" +
+            "        'embedding',                       -- 向量列名\n" +
+            "        ARRAY[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],  -- 查询向量\n" +
+            "        3,                                 -- 返回 Top 3\n" +
+            "        'L2'                               -- L2 距离度量\n" +
+            "    )\n" +
+            ")", datasetPath);
+        
+        System.out.println(vectorSearchSql);
+        System.out.println();
+        System.out.println("📊 检索结果 (按L2距离排序，距离越小越相似):");
+        System.out.println("---------------------------------------------------");
+        
+        try {
+            TableResult result = tableEnv.executeSql(vectorSearchSql);
+            result.print();
+        } catch (Exception e) {
+            System.out.println("⚠️ 向量检索执行出错: " + e.getMessage());
+            System.out.println("   这可能是因为数据集需要先构建索引");
+        }
+        
+        // ============================================
+        // 第五步：使用 COSINE 余弦相似度检索
+        // ============================================
+        System.out.println("\n-- 步骤5: 使用 COSINE 余弦相似度检索");
+        
+        String cosineSearchSql = String.format(
+            "SELECT * FROM TABLE(\n" +
+            "    vector_search(\n" +
+            "        '%s',\n" +
+            "        'embedding',\n" +
+            "        ARRAY[0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1],\n" +
+            "        3,\n" +
+            "        'COSINE'                           -- 余弦相似度\n" +
+            "    )\n" +
+            ")", datasetPath);
+        
+        System.out.println(cosineSearchSql);
+        System.out.println();
+        System.out.println("📊 检索结果 (按余弦距离排序):");
+        System.out.println("---------------------------------------------------");
+        
+        try {
+            tableEnv.executeSql(cosineSearchSql).print();
+        } catch (Exception e) {
+            System.out.println("⚠️ 执行出错: " + e.getMessage());
+        }
+        
+        // ============================================
+        // 第六步：结合普通查询使用向量检索
+        // ============================================
+        System.out.println("\n-- 步骤6: 向量检索与其他查询结合 (LATERAL TABLE)");
+        
+        String lateralSearchSql = String.format(
+            "-- 先查询数据，再基于结果进行向量检索\n" +
+            "SELECT \n" +
+            "    v.id,\n" +
+            "    v.title,\n" +
+            "    v._distance as similarity_distance\n" +
+            "FROM TABLE(\n" +
+            "    vector_search('%s', 'embedding', ARRAY[0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85], 5, 'L2')\n" +
+            ") AS v\n" +
+            "WHERE v._distance < 1.0  -- 只返回距离小于1的结果", datasetPath);
+        
+        System.out.println(lateralSearchSql);
+        System.out.println();
+        
+        // ============================================
+        // 打印配置参数说明
+        // ============================================
+        System.out.println("\n========== IVF_PQ 索引配置参数说明 ==========");
+        System.out.println("╔═════════════════════════════╦════════════════════════════════════════════════════╗");
+        System.out.println("║       配置项                 ║                说明                                ║");
+        System.out.println("╠═════════════════════════════╬════════════════════════════════════════════════════╣");
+        System.out.println("║ index.type = 'IVF_PQ'       ║ 使用 IVF_PQ 索引类型                               ║");
+        System.out.println("║ index.column                ║ 要建立索引的向量列名                               ║");
+        System.out.println("║ index.num-partitions        ║ IVF 分区数量，推荐: sqrt(n) 到 4*sqrt(n)           ║");
+        System.out.println("║ index.num-sub-vectors       ║ PQ 子向量数量，必须能整除向量维度                   ║");
+        System.out.println("║ index.num-bits              ║ PQ 编码位数，默认8 (256个聚类中心)                  ║");
+        System.out.println("║ vector.metric               ║ 距离度量: L2(欧氏距离)/COSINE(余弦)/DOT(点积)      ║");
+        System.out.println("║ vector.nprobes              ║ 检索时探测的分区数，越大越精确但越慢               ║");
+        System.out.println("╚═════════════════════════════╩════════════════════════════════════════════════════╝");
+        
+        System.out.println("\n========== 距离度量类型说明 ==========");
+        System.out.println("╔════════════════╦════════════════════════════════════════════════════════════════╗");
+        System.out.println("║    度量类型    ║                          说明                                  ║");
+        System.out.println("╠════════════════╬════════════════════════════════════════════════════════════════╣");
+        System.out.println("║    L2          ║ 欧氏距离，值越小越相似，适合稠密向量                           ║");
+        System.out.println("║    COSINE      ║ 余弦距离，范围[0,2]，值越小越相似，适合文本嵌入                ║");
+        System.out.println("║    DOT         ║ 负点积，值越小越相似（注意需归一化向量）                       ║");
+        System.out.println("╚════════════════╩════════════════════════════════════════════════════════════════╝");
+        
+        System.out.println("\n✅ 向量检索 IVF_PQ 示例完成！\n");
+    }
+
+    @Test
+    @DisplayName("9.2 不同索引类型对比示例")
+    void testDifferentIndexTypesDetailed() throws Exception {
+        System.out.println("========== 不同向量索引类型对比 ==========");
+        
+        // 使用相对路径，基于项目根目录
+        Path basePath = Paths.get(System.getProperty("user.dir"), "test-data");
+        
+        // ============================================
+        // IVF_PQ 索引 - 适合大规模数据，内存占用小
+        // ============================================
+        System.out.println("【1. IVF_PQ 索引】- 推荐用于大规模数据");
+        System.out.println("优点: 内存占用小，检索速度快");
+        System.out.println("缺点: 精度相对较低（有量化损失）");
+        System.out.println();
+        
+        String ivfPqSql = String.format(
+            "CREATE TABLE ivf_pq_vectors (\n" +
+            "    id BIGINT,\n" +
+            "    embedding ARRAY<FLOAT>\n" +
+            ") WITH (\n" +
+            "    'connector' = 'lance',\n" +
+            "    'path' = '%s',\n" +
+            "    'index.type' = 'IVF_PQ',\n" +
+            "    'index.column' = 'embedding',\n" +
+            "    'index.num-partitions' = '256',    -- IVF 分区数\n" +
+            "    'index.num-sub-vectors' = '16',    -- PQ 子向量数\n" +
+            "    'index.num-bits' = '8',            -- 每个子向量的编码位数\n" +
+            "    'vector.metric' = 'L2'\n" +
+            ")", basePath.resolve("ivf-pq-demo"));
+        
+        System.out.println(ivfPqSql);
+        System.out.println();
+        
+        // ============================================
+        // IVF_HNSW 索引 - 高精度检索
+        // ============================================
+        System.out.println("【2. IVF_HNSW 索引】- 推荐用于高精度需求");
+        System.out.println("优点: 检索精度高");
+        System.out.println("缺点: 内存占用较大，构建索引较慢");
+        System.out.println();
+        
+        String ivfHnswSql = String.format(
+            "CREATE TABLE ivf_hnsw_vectors (\n" +
+            "    id BIGINT,\n" +
+            "    embedding ARRAY<FLOAT>\n" +
+            ") WITH (\n" +
+            "    'connector' = 'lance',\n" +
+            "    'path' = '%s',\n" +
+            "    'index.type' = 'IVF_HNSW',\n" +
+            "    'index.column' = 'embedding',\n" +
+            "    'index.num-partitions' = '256',    -- IVF 分区数\n" +
+            "    'index.hnsw-m' = '16',             -- HNSW 每层连接数\n" +
+            "    'index.hnsw-ef-construction' = '100', -- 构建时的候选集大小\n" +
+            "    'vector.metric' = 'COSINE',\n" +
+            "    'vector.ef' = '50'                 -- 检索时的候选集大小\n" +
+            ")", basePath.resolve("ivf-hnsw-demo"));
+        
+        System.out.println(ivfHnswSql);
+        System.out.println();
+        
+        // ============================================
+        // IVF_FLAT 索引 - 最高精度，暴力检索
+        // ============================================
+        System.out.println("【3. IVF_FLAT 索引】- 精度最高");
+        System.out.println("优点: 检索精度100%（无损）");
+        System.out.println("缺点: 检索速度较慢，适合小规模数据");
+        System.out.println();
+        
+        String ivfFlatSql = String.format(
+            "CREATE TABLE ivf_flat_vectors (\n" +
+            "    id BIGINT,\n" +
+            "    embedding ARRAY<FLOAT>\n" +
+            ") WITH (\n" +
+            "    'connector' = 'lance',\n" +
+            "    'path' = '%s',\n" +
+            "    'index.type' = 'IVF_FLAT',\n" +
+            "    'index.column' = 'embedding',\n" +
+            "    'index.num-partitions' = '128',    -- IVF 分区数\n" +
+            "    'vector.metric' = 'DOT',\n" +
+            "    'vector.nprobes' = '32'            -- 检索时探测的分区数\n" +
+            ")", basePath.resolve("ivf-flat-demo"));
+        
+        System.out.println(ivfFlatSql);
+        System.out.println();
+        
+        // ============================================
+        // 索引选择建议
+        // ============================================
+        System.out.println("========== 索引选择建议 ==========");
+        System.out.println("╔═══════════════════╦════════════════╦═══════════════╦════════════════════════════════╗");
+        System.out.println("║     索引类型      ║   数据规模     ║   精度要求    ║           适用场景             ║");
+        System.out.println("╠═══════════════════╬════════════════╬═══════════════╬════════════════════════════════╣");
+        System.out.println("║    IVF_PQ         ║   100万+       ║     中等      ║ 大规模推荐系统、图片检索       ║");
+        System.out.println("║    IVF_HNSW       ║   10万-100万   ║     高        ║ 语义搜索、问答系统             ║");
+        System.out.println("║    IVF_FLAT       ║   <10万        ║     最高      ║ 小规模高精度场景               ║");
+        System.out.println("╚═══════════════════╩════════════════╩═══════════════╩════════════════════════════════╝");
+        
+        System.out.println("\n✅ 索引类型对比示例完成！\n");
     }
 
     @Test

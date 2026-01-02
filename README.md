@@ -161,6 +161,63 @@ builder.buildIndex();
 | **IVF_HNSW** | High recall, fast search | `num_partitions`, `m`, `ef_construction` |
 | **IVF_FLAT** | Small datasets, exact search | `num_partitions` |
 
+#### 📊 Index Selection Guide
+
+| Scenario | Recommended Index | Reason |
+|----------|------------------|--------|
+| **< 100K vectors** | IVF_FLAT | High accuracy, acceptable performance |
+| **100K - 10M vectors** | IVF_PQ | Good balance of accuracy and memory |
+| **> 10M vectors** | IVF_PQ (tuned) | Optimize `num_partitions` and `num_sub_vectors` |
+| **High recall required** | IVF_HNSW | Best accuracy, higher memory usage |
+| **Memory constrained** | IVF_PQ | Most memory efficient |
+| **Real-time search** | IVF_HNSW | Fastest query latency |
+
+#### ⚙️ Index Configuration Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `index.type` | IVF_PQ | Index type: `IVF_PQ`, `IVF_HNSW`, `IVF_FLAT` |
+| `index.column` | - | Vector column name for indexing |
+| `index.num-partitions` | 256 | Number of IVF partitions |
+| `index.num-sub-vectors` | 16 | PQ sub-vectors (IVF_PQ only) |
+| `index.num-bits` | 8 | Bits per sub-vector (IVF_PQ only) |
+| `index.m` | 16 | HNSW max connections (IVF_HNSW only) |
+| `index.ef-construction` | 100 | HNSW build quality (IVF_HNSW only) |
+
+#### 🔧 Index Building SQL Example
+
+```sql
+-- Create table with IVF_PQ index
+CREATE TABLE doc_embeddings (
+    doc_id BIGINT,
+    title STRING,
+    embedding ARRAY<FLOAT>
+) WITH (
+    'connector' = 'lance',
+    'path' = '/data/embeddings',
+    'index.type' = 'IVF_PQ',
+    'index.column' = 'embedding',
+    'index.num-partitions' = '256',
+    'index.num-sub-vectors' = '16',
+    'vector.metric' = 'COSINE'
+);
+
+-- Create table with IVF_HNSW index (high accuracy)
+CREATE TABLE high_accuracy_vectors (
+    id BIGINT,
+    vector ARRAY<FLOAT>
+) WITH (
+    'connector' = 'lance',
+    'path' = '/data/ha_vectors',
+    'index.type' = 'IVF_HNSW',
+    'index.column' = 'vector',
+    'index.num-partitions' = '128',
+    'index.m' = '32',
+    'index.ef-construction' = '200',
+    'vector.metric' = 'L2'
+);
+```
+
 ### Vector Search
 
 ```java

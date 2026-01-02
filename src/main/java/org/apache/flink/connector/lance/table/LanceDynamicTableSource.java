@@ -33,7 +33,12 @@ import org.apache.flink.table.connector.source.ScanTableSource;
 import org.apache.flink.table.connector.source.abilities.SupportsFilterPushDown;
 import org.apache.flink.table.connector.source.abilities.SupportsProjectionPushDown;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.expressions.CallExpression;
+import org.apache.flink.table.expressions.FieldReferenceExpression;
 import org.apache.flink.table.expressions.ResolvedExpression;
+import org.apache.flink.table.expressions.ValueLiteralExpression;
+import org.apache.flink.table.functions.BuiltInFunctionDefinitions;
+import org.apache.flink.table.functions.FunctionDefinition;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.types.RowKind;
@@ -169,18 +174,154 @@ public class LanceDynamicTableSource implements ScanTableSource,
 
     /**
      * 将 Flink 表达式转换为 Lance 过滤条件
+     * Lance 支持标准 SQL 过滤语法，如：column = 'value', column > 10
      */
     private String convertToLanceFilter(ResolvedExpression expression) {
-        // 简化实现：尝试将表达式转换为字符串形式
-        // 实际生产环境需要更完整的表达式解析
         try {
-            String exprStr = expression.toString();
-            // Lance 支持类似 SQL 的过滤语法
-            return exprStr;
+            if (expression instanceof CallExpression) {
+                CallExpression callExpr = (CallExpression) expression;
+                return convertCallExpression(callExpr);
+            }
+            // 其他类型的表达式暂不支持下推
+            return null;
         } catch (Exception e) {
-            // 无法转换的表达式返回 null
+            // 无法转换的表达式返回 null，由 Flink 在上层处理
             return null;
         }
+    }
+
+    /**
+     * 转换 CallExpression 为 Lance 过滤字符串
+     */
+    private String convertCallExpression(CallExpression callExpr) {
+        FunctionDefinition funcDef = callExpr.getFunctionDefinition();
+        List<ResolvedExpression> args = callExpr.getResolvedChildren();
+
+        // 比较运算符
+        if (funcDef == BuiltInFunctionDefinitions.EQUALS) {
+            return buildComparisonFilter(args, "=");
+        } else if (funcDef == BuiltInFunctionDefinitions.NOT_EQUALS) {
+            return buildComparisonFilter(args, "!=");
+        } else if (funcDef == BuiltInFunctionDefinitions.GREATER_THAN) {
+            return buildComparisonFilter(args, ">");
+        } else if (funcDef == BuiltInFunctionDefinitions.GREATER_THAN_OR_EQUAL) {
+            return buildComparisonFilter(args, ">=");
+        } else if (funcDef == BuiltInFunctionDefinitions.LESS_THAN) {
+            return buildComparisonFilter(args, "<");
+        } else if (funcDef == BuiltInFunctionDefinitions.LESS_THAN_OR_EQUAL) {
+            return buildComparisonFilter(args, "<=");
+        }
+        // 逻辑运算符
+        else if (funcDef == BuiltInFunctionDefinitions.AND) {
+            return buildLogicalFilter(args, "AND");
+        } else if (funcDef == BuiltInFunctionDefinitions.OR) {
+            return buildLogicalFilter(args, "OR");
+        } else if (funcDef == BuiltInFunctionDefinitions.NOT) {
+            if (args.size() == 1) {
+                String inner = convertToLanceFilter(args.get(0));
+                if (inner != null) {
+                    return "NOT (" + inner + ")";
+                }
+            }
+        }
+        // IS NULL / IS NOT NULL
+        else if (funcDef == BuiltInFunctionDefinitions.IS_NULL) {
+            if (args.size() == 1 && args.get(0) instanceof FieldReferenceExpression) {
+                String fieldName = ((FieldReferenceExpression) args.get(0)).getName();
+                return fieldName + " IS NULL";
+            }
+        } else if (funcDef == BuiltInFunctionDefinitions.IS_NOT_NULL) {
+            if (args.size() == 1 && args.get(0) instanceof FieldReferenceExpression) {
+                String fieldName = ((FieldReferenceExpression) args.get(0)).getName();
+                return fieldName + " IS NOT NULL";
+            }
+        }
+        // LIKE
+        else if (funcDef == BuiltInFunctionDefinitions.LIKE) {
+            return buildComparisonFilter(args, "LIKE");
+        }
+        // IN (暂不支持，需要更复杂的处理)
+        // BETWEEN (暂不支持)
+
+        // 不支持的函数，返回 null
+        return null;
+    }
+
+    /**
+     * 构建比较过滤表达式
+     */
+    private String buildComparisonFilter(List<ResolvedExpression> args, String operator) {
+        if (args.size() != 2) {
+            return null;
+        }
+
+        ResolvedExpression left = args.get(0);
+        ResolvedExpression right = args.get(1);
+
+        // 提取字段名和值
+        String fieldName = null;
+        String value = null;
+
+        if (left instanceof FieldReferenceExpression) {
+            fieldName = ((FieldReferenceExpression) left).getName();
+            value = extractLiteralValue(right);
+        } else if (right instanceof FieldReferenceExpression) {
+            fieldName = ((FieldReferenceExpression) right).getName();
+            value = extractLiteralValue(left);
+            // 对于非对称运算符，需要交换操作符
+            if (">".equals(operator)) operator = "<";
+            else if ("<".equals(operator)) operator = ">";
+            else if (">=".equals(operator)) operator = "<=";
+            else if ("<=".equals(operator)) operator = ">=";
+        }
+
+        if (fieldName != null && value != null) {
+            return fieldName + " " + operator + " " + value;
+        }
+
+        return null;
+    }
+
+    /**
+     * 构建逻辑过滤表达式
+     */
+    private String buildLogicalFilter(List<ResolvedExpression> args, String operator) {
+        List<String> convertedArgs = new ArrayList<>();
+        for (ResolvedExpression arg : args) {
+            String converted = convertToLanceFilter(arg);
+            if (converted == null) {
+                return null; // 如果任何一个子表达式无法转换，则整个表达式都不下推
+            }
+            convertedArgs.add("(" + converted + ")");
+        }
+        return String.join(" " + operator + " ", convertedArgs);
+    }
+
+    /**
+     * 从 ValueLiteralExpression 提取字面值
+     */
+    private String extractLiteralValue(ResolvedExpression expr) {
+        if (expr instanceof ValueLiteralExpression) {
+            ValueLiteralExpression literal = (ValueLiteralExpression) expr;
+            Object value = literal.getValueAs(Object.class).orElse(null);
+            
+            if (value == null) {
+                return "NULL";
+            } else if (value instanceof String) {
+                // 字符串需要用单引号包裹，并转义内部的单引号
+                String strValue = (String) value;
+                strValue = strValue.replace("'", "''");
+                return "'" + strValue + "'";
+            } else if (value instanceof Number) {
+                return value.toString();
+            } else if (value instanceof Boolean) {
+                return value.toString().toUpperCase();
+            } else {
+                // 其他类型尝试转为字符串
+                return "'" + value.toString().replace("'", "''") + "'";
+            }
+        }
+        return null;
     }
 
     /**

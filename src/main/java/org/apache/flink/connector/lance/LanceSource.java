@@ -141,27 +141,81 @@ public class LanceSource extends RichParallelSourceFunction<RowData> {
         int subtaskIndex = getRuntimeContext().getIndexOfThisSubtask();
         int numSubtasks = getRuntimeContext().getNumberOfParallelSubtasks();
         
-        // 获取数据集的所有 Fragment
-        List<Fragment> fragments = dataset.getFragments();
-        LOG.info("数据集共有 {} 个 Fragment，当前子任务 {}/{}", 
-                fragments.size(), subtaskIndex, numSubtasks);
+        String filter = options.getReadFilter();
         
-        // 按子任务分配 Fragment
-        for (int i = 0; i < fragments.size() && running; i++) {
-            // 简单的轮询分配策略
-            if (i % numSubtasks != subtaskIndex) {
-                continue;
+        // 如果有过滤条件，使用 Dataset 级别扫描（只在第一个子任务执行，避免重复数据）
+        if (filter != null && !filter.isEmpty()) {
+            if (subtaskIndex == 0) {
+                LOG.info("使用 Dataset 级别扫描（带过滤条件）");
+                readDatasetWithFilter(ctx);
+            } else {
+                LOG.info("子任务 {} 跳过（过滤模式下只有子任务 0 执行）", subtaskIndex);
             }
+        } else {
+            // 无过滤条件时，使用 Fragment 级别并行扫描
+            List<Fragment> fragments = dataset.getFragments();
+            LOG.info("数据集共有 {} 个 Fragment，当前子任务 {}/{}", 
+                    fragments.size(), subtaskIndex, numSubtasks);
             
-            Fragment fragment = fragments.get(i);
-            readFragment(ctx, fragment);
+            // 按子任务分配 Fragment
+            for (int i = 0; i < fragments.size() && running; i++) {
+                // 简单的轮询分配策略
+                if (i % numSubtasks != subtaskIndex) {
+                    continue;
+                }
+                
+                Fragment fragment = fragments.get(i);
+                readFragment(ctx, fragment);
+            }
         }
         
         LOG.info("Lance 数据源读取完成");
     }
 
     /**
-     * 读取单个 Fragment
+     * 使用 Dataset 级别扫描（支持过滤条件）
+     */
+    private void readDatasetWithFilter(SourceContext<RowData> ctx) throws Exception {
+        // 构建扫描选项
+        ScanOptions.Builder scanOptionsBuilder = new ScanOptions.Builder();
+        
+        // 设置批次大小
+        scanOptionsBuilder.batchSize(options.getReadBatchSize());
+        
+        // 设置列过滤
+        if (selectedColumns != null && selectedColumns.length > 0) {
+            scanOptionsBuilder.columns(Arrays.asList(selectedColumns));
+        }
+        
+        // 设置数据过滤条件
+        String filter = options.getReadFilter();
+        if (filter != null && !filter.isEmpty()) {
+            LOG.info("应用过滤条件: {}", filter);
+            scanOptionsBuilder.filter(filter);
+        }
+        
+        ScanOptions scanOptions = scanOptionsBuilder.build();
+        
+        // 使用 Dataset 级别扫描
+        try (LanceScanner scanner = dataset.newScan(scanOptions)) {
+            try (ArrowReader reader = scanner.scanBatches()) {
+                while (reader.loadNextBatch() && running) {
+                    VectorSchemaRoot root = reader.getVectorSchemaRoot();
+                    
+                    // 转换为 RowData 并输出
+                    List<RowData> rows = converter.toRowDataList(root);
+                    synchronized (ctx.getCheckpointLock()) {
+                        for (RowData row : rows) {
+                            ctx.collect(row);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 读取单个 Fragment（不带过滤条件）
      */
     private void readFragment(SourceContext<RowData> ctx, Fragment fragment) throws Exception {
         LOG.debug("读取 Fragment: {}", fragment.getId());
@@ -177,11 +231,7 @@ public class LanceSource extends RichParallelSourceFunction<RowData> {
             scanOptionsBuilder.columns(Arrays.asList(selectedColumns));
         }
         
-        // 设置数据过滤条件
-        String filter = options.getReadFilter();
-        if (filter != null && !filter.isEmpty()) {
-            scanOptionsBuilder.filter(filter);
-        }
+        // 注意：Fragment 级别扫描不使用 filter，filter 只在 Dataset 级别支持
         
         ScanOptions scanOptions = scanOptionsBuilder.build();
         

@@ -43,6 +43,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -183,6 +184,106 @@ public class LanceVectorSearchFunction extends TableFunction<Row> {
      */
     public void eval(String datasetPath, String columnName, Float[] queryVector) {
         eval(datasetPath, columnName, queryVector, 10, "L2");
+    }
+
+    // ==================== BigDecimal[] 参数重载 ====================
+    // Flink SQL 中 ARRAY[0.1, 0.2, ...] 会被解析为 BigDecimal[] 类型
+
+    /**
+     * 执行向量检索（支持 BigDecimal[] 参数）
+     * 
+     * <p>Flink SQL 中的 ARRAY[0.1, 0.2, ...] 字面量会被解析为 DECIMAL 类型数组，
+     * 因此需要此方法重载来支持。
+     *
+     * @param datasetPath 数据集路径
+     * @param columnName 向量列名
+     * @param queryVector 查询向量（BigDecimal数组）
+     * @param k 返回的最近邻数量
+     * @param metric 距离度量类型：L2, Cosine, Dot
+     */
+    public void eval(String datasetPath, String columnName, BigDecimal[] queryVector, Integer k, String metric) {
+        Float[] floatVector = convertBigDecimalToFloat(queryVector);
+        eval(datasetPath, columnName, floatVector, k, metric);
+    }
+
+    /**
+     * 简化的向量检索（BigDecimal[] 参数）
+     */
+    public void eval(String datasetPath, String columnName, BigDecimal[] queryVector, Integer k) {
+        eval(datasetPath, columnName, queryVector, k, "L2");
+    }
+
+    /**
+     * 最简化的向量检索（BigDecimal[] 参数）
+     */
+    public void eval(String datasetPath, String columnName, BigDecimal[] queryVector) {
+        eval(datasetPath, columnName, queryVector, 10, "L2");
+    }
+
+    // ==================== Double[] 参数重载 ====================
+    // 某些情况下参数可能被解析为 Double[] 类型
+
+    /**
+     * 执行向量检索（支持 Double[] 参数）
+     */
+    public void eval(String datasetPath, String columnName, Double[] queryVector, Integer k, String metric) {
+        Float[] floatVector = convertDoubleToFloat(queryVector);
+        eval(datasetPath, columnName, floatVector, k, metric);
+    }
+
+    /**
+     * 简化的向量检索（Double[] 参数）
+     */
+    public void eval(String datasetPath, String columnName, Double[] queryVector, Integer k) {
+        eval(datasetPath, columnName, queryVector, k, "L2");
+    }
+
+    /**
+     * 最简化的向量检索（Double[] 参数）
+     */
+    public void eval(String datasetPath, String columnName, Double[] queryVector) {
+        eval(datasetPath, columnName, queryVector, 10, "L2");
+    }
+
+    // ==================== float[] 原生数组参数重载 ====================
+
+    /**
+     * 执行向量检索（支持 float[] 原生数组参数）
+     */
+    public void eval(String datasetPath, String columnName, float[] queryVector, Integer k, String metric) {
+        Float[] floatVector = new Float[queryVector.length];
+        for (int i = 0; i < queryVector.length; i++) {
+            floatVector[i] = queryVector[i];
+        }
+        eval(datasetPath, columnName, floatVector, k, metric);
+    }
+
+    /**
+     * 将 BigDecimal 数组转换为 Float 数组
+     */
+    private Float[] convertBigDecimalToFloat(BigDecimal[] decimals) {
+        if (decimals == null) {
+            return new Float[0];
+        }
+        Float[] result = new Float[decimals.length];
+        for (int i = 0; i < decimals.length; i++) {
+            result[i] = decimals[i] != null ? decimals[i].floatValue() : 0.0f;
+        }
+        return result;
+    }
+
+    /**
+     * 将 Double 数组转换为 Float 数组
+     */
+    private Float[] convertDoubleToFloat(Double[] doubles) {
+        if (doubles == null) {
+            return new Float[0];
+        }
+        Float[] result = new Float[doubles.length];
+        for (int i = 0; i < doubles.length; i++) {
+            result[i] = doubles[i] != null ? doubles[i].floatValue() : 0.0f;
+        }
+        return result;
     }
 
     /**
